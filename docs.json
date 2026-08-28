@@ -52,7 +52,65 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/smart-checkpoints"
-    }
+      "github": "https://github.com/smart-checkpoints",
+      "website": "https://smartcheckpoints.xyz"
+    },
+    "links": [
+      {
+        "header": "Documentation",
+        "items": [
+          {
+            "label": "Introduction",
+            "href": "/"
+          },
+          {
+            "label": "Quickstart",
+            "href": "/quickstart"
+          }
+        ]
+      },
+      {
+        "header": "Repositories",
+        "items": [
+          {
+            "label": "server",
+            "href": "https://github.com/smart-checkpoints/server"
+          },
+          {
+            "label": "driver-osrm",
+            "href": "https://github.com/smart-checkpoints/driver-osrm"
+          },
+          {
+            "label": "simulation",
+            "href": "https://github.com/smart-checkpoints/simulation"
+          },
+          {
+            "label": "docs",
+            "href": "https://github.com/smart-checkpoints/docs"
+          }
+        ]
+      },
+      {
+        "header": "Project",
+        "items": [
+          {
+            "label": "Website",
+            "href": "https://smartcheckpoints.xyz"
+          },
+          {
+            "label": "GitHub organisation",
+            "href": "https://github.com/smart-checkpoints"
+          },
+          {
+            "label": "Issues",
+            "href": "https://github.com/smart-checkpoints/server/issues"
+          },
+          {
+            "label": "License",
+            "href": "https://github.com/smart-checkpoints/server"
+          }
+        ]
+      }
+    ]
   }
 }
