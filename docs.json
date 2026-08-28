@@ -7,6 +7,24 @@
     "light": "#19c4d8",
     "dark": "#0e7f8c"
   },
+  "fonts": {
+    "heading": {
+      "family": "Space Grotesk",
+      "weight": 700
+    },
+    "body": {
+      "family": "Inter"
+    }
+  },
+  "background": {
+    "color": {
+      "light": "#eceff0",
+      "dark": "#141a1c"
+    }
+  },
+  "appearance": {
+    "default": "light"
+  },
   "favicon": "/favicon.svg",
   "navigation": {
     "pages": [

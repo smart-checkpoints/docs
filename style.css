@@ -1,0 +1,20 @@
+/* The docs run on the same design system as smartcheckpoints.xyz.
+
+   Space Grotesk for headings and Inter for body are set in docs.json, which
+   only takes a heading and a body face. The mono face has no key there, so it
+   is loaded here: every technical value on the site is set in JetBrains Mono
+   and the docs should not be the one surface that is not. */
+
+@import url("https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+:root {
+  --sc-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    monospace;
+}
+
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--sc-mono);
+}
