@@ -27,41 +27,47 @@
   },
   "favicon": "/favicon.svg",
   "navigation": {
-    "pages": [
+    "tabs": [
       {
-        "group": "Getting started",
-        "pages": [
-          "index",
-          "quickstart"
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Getting started",
+            "pages": [
+              "index",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/graph-model",
+              "concepts/enforcement",
+              "concepts/distance-drivers"
+            ]
+          }
         ]
       },
       {
-        "group": "Concepts",
-        "pages": [
-          "concepts/graph-model",
-          "concepts/enforcement",
-          "concepts/distance-drivers"
-        ]
-      },
-      {
-        "group": "Reference",
-        "pages": [
-          "reference/rest-api",
-          "reference/driver-protocol",
-          "reference/realtime",
-          "reference/data-model"
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Interfaces",
+            "pages": [
+              "reference/rest-api",
+              "reference/realtime",
+              "reference/driver-protocol"
+            ]
+          },
+          {
+            "group": "Storage",
+            "pages": [
+              "reference/data-model"
+            ]
+          }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Website",
-          "href": "https://smartcheckpoints.xyz",
-          "icon": "globe"
-        }
-      ]
-    }
+    ]
   },
   "logo": {
     "light": "/logo/light.svg",
