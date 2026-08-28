@@ -1,0 +1,56 @@
+---
+title: "Realtime events"
+description: "The Socket.IO channel that browser clients use to follow a project live."
+---
+
+Browser clients follow a project over Socket.IO on the same origin and port as
+the REST API. Distance drivers do not use this channel; they use the [driver
+protocol](/reference/driver-protocol).
+
+## Join a project
+
+A socket sees nothing until it joins a project room, which it does with an API
+key.
+
+```js
+socket.emit("join-project", { apiKey });
+
+socket.on("joined", ({ project_id }) => { /* ... */ });
+socket.on("error", ({ message }) => { /* invalid API key */ });
+```
+
+Immediately after joining, the server also sends the current
+`distance-driver-status`.
+
+## Events the server sends
+
+| Event | Payload | Sent when |
+| --- | --- | --- |
+| `joined` | `{ project_id }` | The socket joined a project room |
+| `node-added` | `{ node_id, id_in_project, latitude, longitude }` | A checkpoint was created |
+| `connection-added` | `{ connection_id, from_node_id, to_node_id, distance, speed_limit }` | An edge was created |
+| `connection-updated` | `{ connection_id, distance, speed_limit }` | An edge was edited, or a driver re-measured it |
+| `node-triggered` | `{ id_in_project, car_plate, violation }` | Any checkpoint report, violation or not |
+| `violation-added` | `{ car_plate, car_speed, timestamp }` | A traversal broke the limit |
+| `distance-driver-status` | `{ connected }` | A driver connected or disconnected |
+| `congestion-update` | `{ [connection_id]: ratio }` | Every 3 seconds, for edges with recent traffic |
+
+`node-triggered` fires for every report, so use it to animate the graph.
+`violation-added` fires only for violations.
+
+The congestion ratio is the average elapsed time over the last five minutes
+divided by the minimum legal traversal time. Roughly `1` means traffic is moving
+at about the limit, and higher means slower. Edges with no traffic in the window
+are omitted rather than sent as zero.
+
+## Events a client can send
+
+Both mirror their REST equivalents and broadcast the same events to the room.
+
+```js
+socket.emit("create-connection", { from_node_id, to_node_id, distance, speed_limit });
+socket.emit("update-connection", { connection_id, distance, speed_limit });
+```
+
+As with the REST endpoint, omitting `distance` on `create-connection` makes the
+server ask the connected distance driver for it.

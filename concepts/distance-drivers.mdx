@@ -1,0 +1,81 @@
+---
+title: "Distance drivers"
+description: "Why road distance lives outside the server, and the contract that keeps drivers interchangeable."
+---
+
+Road distance depends on a map, and a map is a dependency worth keeping outside
+the server. So a driver is a separate process: it opens a WebSocket,
+authenticates with a project API key, and waits.
+
+The server sends two node indices and a request id. The driver answers with a
+number of metres against the same id. That is the whole contract: node indices
+in, metres out. It says nothing about how the distance is obtained, which is
+exactly what makes drivers interchangeable. An OSRM server, a commercial routing
+API, a table of surveyed distances, or figures measured by hand for a network no
+public map covers well all answer the same two messages.
+
+## When the server asks
+
+- **A driver connects.** The server immediately recalculates every edge in the
+  project, so a reconnect re-measures the whole graph in one burst.
+- **An edge is created without a distance.** If a driver is connected, the
+  server asks before storing the edge.
+
+A driver should expect the entire graph to arrive at once and throttle itself
+accordingly.
+
+## Run the reference driver
+
+[`driver-osrm`](https://github.com/smart-checkpoints/driver-osrm) resolves
+distances by asking an OSRM routing server for the driving route between two
+checkpoints. It does one thing: no geometry, no alternative routes, no caching,
+no fallback estimate.
+
+```bash
+GBDS_API_KEY=your-project-key npm start
+```
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `GBDS_WS_URL` | `ws://localhost:3000/distance-driver` | Driver WebSocket endpoint. |
+| `GBDS_API_KEY` | *(required)* | Project API key, used for the auth message and the `x-api-key` header. |
+| `GBDS_HTTP_URL` | origin of `GBDS_WS_URL` | REST base URL, if it is not on the same origin. |
+| `OSRM_BASE_URL` | `https://router.project-osrm.org` | OSRM server. The default is the public demo instance. |
+| `REQUEST_TIMEOUT_MS` | `5000` | Per attempt timeout for OSRM and the node lookup. |
+| `MAX_CONCURRENT_OSRM` | `4` | How many OSRM calls may be in flight at once. |
+
+<Note>
+  The `GBDS_` prefix is deliberate. GBDS is the internal graph architecture
+  inside the server, not the product name, and renaming these variables would
+  break every existing deployment's `.env`.
+</Note>
+
+## Write your own
+
+The full message shapes are in the [driver protocol
+reference](/reference/driver-protocol). A driver needs to do four things:
+
+1. Open a WebSocket to `/distance-driver` and send an `auth` message.
+2. Resolve node indices to coordinates over `GET /project/{id}/nodes`, since the
+   server sends indices rather than coordinates.
+3. Answer each `calculate-distance` with a `distance-result` carrying the same
+   `requestId` and a distance in metres.
+4. Reconnect with backoff when the socket drops.
+
+## Failing safe, and failing silent
+
+A driver that cannot answer sends nothing at all. There is no failure message in
+the protocol: the server reads exactly two inbound types, `auth` and
+`distance-result`, and drops anything else.
+
+The server times the request out after 30 seconds rather than accepting a
+straight line guess, and stores `distance = 0` for that edge. That edge produces
+no violations at all, which is the safe outcome, but nothing surfaces on either
+side. The only record of the failure is the driver's own log.
+
+<Warning>
+  A node with a coordinate inside the valid range but in the wrong place still
+  routes. The driver produces a real route to the wrong location, and neither
+  side can tell. Verify checkpoint coordinates before you trust the distances
+  built on them.
+</Warning>

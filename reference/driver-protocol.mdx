@@ -1,0 +1,97 @@
+---
+title: "Driver protocol"
+description: "The WebSocket contract between the server and a distance driver."
+---
+
+A distance driver connects over a raw WebSocket, not Socket.IO. Socket.IO on
+this server is for browser clients only.
+
+```
+ws://<server-host>:3000/distance-driver
+```
+
+The upgrade path lives on the same origin and port as the REST API.
+
+## Authenticate
+
+Authentication is a message, not a header. The driver opens the socket with no
+special headers and immediately sends:
+
+```json
+{ "type": "auth", "apiKey": "<project api key>" }
+```
+
+The server answers with one of:
+
+```json
+{ "type": "authenticated", "projectId": 1 }
+```
+```json
+{ "type": "error", "message": "Invalid API key" }
+```
+
+Keep the `projectId`. It is needed for the node lookup below. There is no
+handshake or heartbeat beyond this, and no ping or pong is configured on the
+socket.
+
+## Answer distance requests
+
+The server addresses an edge by its two node indices and correlates the answer by
+`requestId`. There is no edge id and no coordinate in this message.
+
+```json
+{
+  "type": "calculate-distance",
+  "requestId": "6f659d37-28bf-4fb7-9d39-6320585518e1",
+  "fromIdInProject": 0,
+  "toIdInProject": 1
+}
+```
+
+The driver answers with the same `requestId` and a distance in **metres**:
+
+```json
+{
+  "type": "distance-result",
+  "requestId": "6f659d37-28bf-4fb7-9d39-6320585518e1",
+  "distance": 1767.5
+}
+```
+
+Metres is the unit the violation maths expects. The server divides by a km/h
+speed limit and multiplies by 3.6 to get seconds.
+
+## Resolve coordinates
+
+The server sends node indices, so the driver resolves them itself over the REST
+API. This is the one place a driver uses the `x-api-key` header.
+
+```
+GET http://<server-host>:3000/project/<projectId>/nodes
+x-api-key: <project api key>
+```
+
+```json
+[{ "node_id": 1, "id_in_project": 0, "latitude": 30.0444, "longitude": 31.2357 }]
+```
+
+Re-fetch on a cache miss so that nodes added while the driver is connected
+resolve without a restart.
+
+## There is no failure event
+
+The server's message handler reads exactly two inbound types, `auth` and
+`distance-result`. Anything else is dropped silently. There is no message a
+driver can send to say that an edge could not be resolved.
+
+A request the driver cannot answer is handled by the server's own 30 second
+timeout, after which the server stores `distance = 0` for that edge. Never send a
+guessed or straight line distance to avoid this: a zero produces no violations,
+while a plausible wrong number produces violations that look real.
+
+## Expect the whole graph at once
+
+The server recalculates every edge in the project the moment a driver
+authenticates. On a reconnect that is the entire graph in one burst, so throttle
+outbound work and keep your total retry budget under the server's 30 second
+timeout.

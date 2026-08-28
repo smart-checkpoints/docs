@@ -1,0 +1,69 @@
+---
+title: "The graph model"
+description: "Projects, nodes, edges, and the two numbers that decide a violation."
+---
+
+A road network is stored as a graph. Enforcement is a property of an edge, not
+of a camera.
+
+<Columns cols={3}>
+  <Card title="Project" icon="folder">
+    One deployment: a set of checkpoints and the edges between them, behind its
+    own API key.
+  </Card>
+  <Card title="Node" icon="location-dot">
+    A camera checkpoint. Carries a coordinate and an index within its project.
+  </Card>
+  <Card title="Edge" icon="arrows-left-right">
+    A stretch of road between two checkpoints that is actually enforced. Carries
+    a distance and a speed limit.
+  </Card>
+</Columns>
+
+Adding a checkpoint means adding a node and declaring which existing nodes it
+connects to. Everything downstream follows from the shape of the graph. Two
+cameras with no edge between them enforce nothing, however close they are.
+
+## The two ids of a node
+
+Every node has two identifiers, and different parts of the system use different
+ones.
+
+| Field | Scope | Used by |
+| --- | --- | --- |
+| `node_id` | Unique across the whole server | Edges, in `from-node-id` and `to-node-id` |
+| `id_in_project` | Index inside one project, from zero | `/report-checkpoint`, and the distance driver protocol |
+
+Cameras and drivers speak in project indices, so they never need to know
+anything about other projects on the same server.
+
+## Coordinates
+
+Every coordinate in the system is WGS84 degrees, always. The server rejects
+anything outside latitude &plusmn;90 or longitude &plusmn;180 on the way in,
+because that check is the only thing standing between a typo and enforcement
+built on a wrong position.
+
+Nodes carry latitude and longitude only. There is no altitude.
+
+## The rule
+
+An edge carries two numbers, and those two numbers are all the logic needs.
+
+```
+minimum legal traversal time (s) = distance (m) / speed limit (km/h) * 3.6
+
+average speed (km/h) = distance (m) / elapsed time (s) * 3.6
+```
+
+A run is a violation when it crossed the edge in less time than the limit
+allows. Distances are always metres and speed limits are always km/h. A driver
+that answers in kilometres, or a limit entered in mph, produces violations that
+look perfectly normal.
+
+<Note>
+  An edge with a distance of `0` can never produce a violation, because no
+  vehicle can be too fast over no distance. This is what an unmeasured edge
+  looks like in the database, and it is why a missing distance driver fails
+  quietly rather than loudly.
+</Note>

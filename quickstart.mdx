@@ -1,47 +1,142 @@
 ---
 title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+description: "Run the server, build a two checkpoint graph, and produce a violation."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+This walks a full enforcement path on one machine: a server, two checkpoints,
+one edge between them, and a vehicle that crosses it too fast.
 
 ## Prerequisites
 
-Before you begin, you must have:
+- Node.js 18 or newer
+- The [server](https://github.com/smart-checkpoints/server) repository
+- A terminal that can send HTTP requests, such as `curl`
 
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+## Run the server
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
-
+  <Step title="Install and start">
     ```bash
-    npm install your-package
+    npm install
+    npm start
     ```
+
+    The server listens on port `3000` unless `PORT` says otherwise, and creates
+    `database.db` next to `server.js` on first run.
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+  <Step title="Create a project">
+    A project is one deployment: its own checkpoints, its own edges, its own API
+    key.
 
     ```bash
-    your-cli init
+    curl -X POST http://localhost:3000/create-project \
+      -H "Content-Type: application/json" \
+      -d '{"project-name":"Demo"}'
     ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
 
-    ```bash
-    your-cli start
+    ```json
+    { "project_id": 1, "api_key": "Xk3pQ9..." }
     ```
+
+    Keep the key. Every other request needs it in the `x-api-key` header.
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+<Warning>
+  `/create-project` and `/list-projects` are unauthenticated. Anyone who can
+  reach the port can create a project and list the existing ones. Keep the
+  server behind a network boundary you control.
+</Warning>
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+## Build the graph
+
+<Steps>
+  <Step title="Add two checkpoints">
+    Each node carries a WGS84 coordinate. The response gives you two ids:
+    `node_id` is unique across the server, `id_in_project` is the index inside
+    this project, counting from zero.
+
+    ```bash
+    curl -X POST http://localhost:3000/create-node \
+      -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
+      -d '{"latitude":30.0444,"longitude":31.2357}'
+
+    curl -X POST http://localhost:3000/create-node \
+      -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
+      -d '{"latitude":30.0459,"longitude":31.2243}'
+    ```
+  </Step>
+  <Step title="Connect them">
+    An edge carries a distance in metres and a speed limit in km/h. Those two
+    numbers are the entire enforcement rule.
+
+    ```bash
+    curl -X POST http://localhost:3000/create-connection \
+      -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
+      -d '{"from-node-id":1,"to-node-id":2,"distance":1767.5,"speed-limit":60}'
+    ```
+
+    Note that `from-node-id` and `to-node-id` are `node_id` values, not
+    `id_in_project`.
+
+    Omit `distance` and the server asks the connected distance driver for it. If
+    no driver is connected, the edge is stored with `distance` of `0`, which
+    can never produce a violation. See [Distance
+    drivers](/concepts/distance-drivers).
+  </Step>
+</Steps>
+
+## Report two sightings
+
+A checkpoint reports a plate and the moment it passed. Enforcement begins on the
+second sighting, when the same plate reaches the other end of an edge.
+
+```bash
+curl -X POST http://localhost:3000/report-checkpoint \
+  -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
+  -d '{"car-plate":"ABC-123","id-in-project":0,"timestamp":"2026-01-01T10:00:00Z"}'
+
+curl -X POST http://localhost:3000/report-checkpoint \
+  -H "x-api-key: $API_KEY" -H "Content-Type: application/json" \
+  -d '{"car-plate":"ABC-123","id-in-project":1,"timestamp":"2026-01-01T10:01:00Z"}'
+```
+
+`id-in-project` here, not `node_id`. Omit `timestamp` and the server uses its own
+clock.
+
+1767.5 metres at a 60 km/h limit cannot legally be crossed in less than 106
+seconds. The run above took 60, so the second call answers:
+
+```json
+{
+  "status": true,
+  "carSpeed": 106.05,
+  "legalLimit": 60,
+  "timestamp": "2026-01-01T10:01:00.000Z",
+  "nodeId": 2,
+  "carPlate": "ABC-123"
+}
+```
+
+## Read the violations
+
+```bash
+curl http://localhost:3000/project/1/violations -H "x-api-key: $API_KEY"
+```
+
+<Tip>
+  The server ships a browser view of the same graph at
+  `http://localhost:3000/project`, which updates live over Socket.IO as nodes,
+  edges, and violations arrive.
 </Tip>
+
+## Next
+
+<Columns cols={2}>
+  <Card title="Connect a real distance driver" icon="route" href="/concepts/distance-drivers">
+    Stop hand entering distances and let a routing engine measure the road.
+  </Card>
+  <Card title="REST API reference" icon="code" href="/reference/rest-api">
+    Every endpoint, with its authentication and its shape.
+  </Card>
+</Columns>

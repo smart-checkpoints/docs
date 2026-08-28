@@ -1,0 +1,98 @@
+---
+title: "Data model"
+description: "The SQLite tables behind the graph."
+---
+
+The server stores everything in one SQLite file, `database.db`, created next to
+`server.js` on first run. The schema is created and migrated at startup, and a
+failed migration stops the server rather than letting it serve wrong positions.
+
+## Tables
+
+<AccordionGroup>
+  <Accordion title="projects" icon="folder">
+    One deployment and its API key.
+
+    | Column | Type | Notes |
+    | --- | --- | --- |
+    | `project_id` | INTEGER | Primary key |
+    | `project_name` | TEXT | |
+    | `api_key` | TEXT | 32 characters, generated on creation |
+    | `node_count` | INTEGER | |
+    | `connection_count` | INTEGER | |
+  </Accordion>
+
+  <Accordion title="nodes" icon="location-dot">
+    A camera checkpoint.
+
+    | Column | Type | Notes |
+    | --- | --- | --- |
+    | `node_id` | INTEGER | Primary key, unique across the server |
+    | `project_id` | INTEGER | |
+    | `id_in_project` | INTEGER | Index within the project, from zero |
+    | `latitude` | REAL | WGS84 degrees |
+    | `longitude` | REAL | WGS84 degrees |
+  </Accordion>
+
+  <Accordion title="connections" icon="arrows-left-right">
+    An enforced edge between two checkpoints.
+
+    | Column | Type | Notes |
+    | --- | --- | --- |
+    | `connection_id` | INTEGER | Primary key |
+    | `project_id` | INTEGER | |
+    | `from_node_id` | INTEGER | References `nodes.node_id` |
+    | `to_node_id` | INTEGER | References `nodes.node_id` |
+    | `distance` | REAL | Metres. `0` means unmeasured |
+    | `speed_limit` | REAL | km/h |
+  </Accordion>
+
+  <Accordion title="car_data" icon="car">
+    The last sighting per plate. One row per plate per project, overwritten on
+    every in order sighting.
+
+    | Column | Type | Notes |
+    | --- | --- | --- |
+    | `car_id` | INTEGER | Primary key |
+    | `project_id` | INTEGER | |
+    | `car_plate` | TEXT | |
+    | `last_sighting_time` | INT | |
+    | `last_sighting_node_id` | INTEGER | References `nodes.node_id` |
+  </Accordion>
+
+  <Accordion title="violations" icon="triangle-exclamation">
+    A recorded violation. Append only.
+
+    | Column | Type | Notes |
+    | --- | --- | --- |
+    | `violation_id` | INTEGER | Primary key |
+    | `project_id` | INTEGER | |
+    | `car_plate` | TEXT | |
+    | `car_speed` | REAL | Average km/h across the edge |
+    | `timestamp` | TEXT | Time of the second sighting |
+  </Accordion>
+
+  <Accordion title="traversals" icon="stopwatch">
+    Every crossing of an edge, violation or not. Feeds the congestion figure and
+    is pruned to the last five minutes.
+
+    | Column | Type | Notes |
+    | --- | --- | --- |
+    | `traversal_id` | INTEGER | Primary key |
+    | `connection_id` | INTEGER | References `connections.connection_id` |
+    | `delta_t` | REAL | Elapsed seconds across the edge |
+    | `timestamp` | TEXT | |
+  </Accordion>
+</AccordionGroup>
+
+## Retention
+
+`traversals` is the only table the server prunes, and only to the last five
+minutes. `violations` grows without bound, and `car_data` holds one row per plate
+that has ever been seen by the project.
+
+<Note>
+  A violation records the plate, the average speed, and the time. It does not
+  record which edge it happened on. If you need that, read it from the
+  `traversals` row with the matching timestamp.
+</Note>

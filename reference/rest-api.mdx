@@ -1,0 +1,123 @@
+---
+title: "REST API"
+description: "Every HTTP endpoint the server exposes."
+---
+
+The server listens on port `3000` unless `PORT` says otherwise. All request and
+response bodies are JSON.
+
+## Server environment
+
+The server reads its configuration from the environment, with `.env` loaded
+through `dotenv`.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PORT` | `3000` | HTTP and WebSocket port. |
+| `ADMIN_PASSWORD` | *(none)* | Guards both admin endpoints. Unset means no password can match. |
+| `WIFI_ADAPTER_NAME` | *(none)* | Named network adapter whose IPv4 address is printed at startup, so cameras on the same network know where to report. |
+
+## Authentication
+
+Most endpoints authenticate with a project API key in a header:
+
+```
+x-api-key: <project api key>
+```
+
+A missing key answers `401 Missing API key`, an unknown one answers
+`401 Invalid API key`. Endpoints that take a project id in the path also check
+that the key belongs to that project, and answer `403` if it does not.
+
+<Warning>
+  `/create-project`, `/list-projects`, and `/project/{id}/thumbnail-data` require
+  no authentication at all. Anyone who can reach the port can create a project
+  and enumerate the existing ones.
+</Warning>
+
+## Projects
+
+| Endpoint | Auth | Body | Answers |
+| --- | --- | --- | --- |
+| `POST /create-project` | none | `{ "project-name" }` | `{ project_id, api_key }` |
+| `POST /authenticate` | none | `{ "api-key" }` | `{ project_id, project_name }` |
+| `GET /list-projects` | none | | every project, without its key |
+
+`/create-project` generates a fresh 32 character key. `/authenticate` turns a key
+back into a project id, and answers `401` if the key is unknown.
+
+## Nodes and edges
+
+| Endpoint | Auth | Body | Answers |
+| --- | --- | --- | --- |
+| `POST /create-node` | `x-api-key` | `{ "latitude", "longitude" }` | `{ node_id, id_in_project }` |
+| `POST /create-connection` | `x-api-key` | `{ "from-node-id", "to-node-id", "speed-limit", "distance"? }` | `{ connection_id }` |
+| `PUT /connection/{id}` | `x-api-key` | `{ "distance", "speed-limit" }` | `{ success: true }` |
+| `GET /project/{id}/nodes` | `x-api-key` | | `[{ node_id, id_in_project, latitude, longitude }]` |
+| `GET /project/{id}/connections` | `x-api-key` | | `[{ connection_id, from_node_id, to_node_id, distance, speed_limit }]` |
+
+Coordinates are WGS84 degrees, and anything outside latitude &plusmn;90 or
+longitude &plusmn;180 answers `400`.
+
+On `/create-connection` the node fields are `node_id` values, `speed-limit` is
+km/h and `distance` is metres. Omit `distance` and the server asks the connected
+[distance driver](/concepts/distance-drivers) for it. With no driver connected,
+or on a driver failure, the edge is stored with a `distance` of `0`.
+
+## Checkpoints and violations
+
+```http
+POST /report-checkpoint
+x-api-key: <project api key>
+
+{ "car-plate": "ABC-123", "id-in-project": 1, "timestamp": "2026-01-01T10:01:00Z" }
+```
+
+This takes `id_in_project`, not `node_id`. Omit `timestamp` and the server uses
+its own clock. An index that does not exist in the project answers `404`.
+
+The response is the verdict for this sighting:
+
+```json
+{
+  "status": true,
+  "carSpeed": 106.05,
+  "legalLimit": 60,
+  "timestamp": "2026-01-01T10:01:00.000Z",
+  "nodeId": 2,
+  "carPlate": "ABC-123"
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `true` when this traversal is a violation |
+| `carSpeed` | Average km/h across the edge |
+| `legalLimit` | The edge's speed limit in km/h |
+| `outOfOrder` | Present and `true` when the report arrived after a newer one, in which case nothing is recorded |
+
+<Note>
+  When there is no previous sighting, or no edge between the previous checkpoint
+  and this one, `status` is `false` and the speed fields carry placeholder
+  values. Read `status` alone, never `carSpeed` on its own.
+</Note>
+
+`GET /project/{id}/violations` with `x-api-key` returns the recorded violations:
+`[{ violation_id, project_id, car_plate, car_speed, timestamp }]`.
+
+## Operations
+
+| Endpoint | Auth | Answers |
+| --- | --- | --- |
+| `GET /project/{id}/distance-driver-status` | `x-api-key` | `{ connected: boolean }` |
+| `GET /project/{id}/thumbnail-data` | none | node and edge geometry, for a project preview |
+| `POST /admin/auth` | body password | `{ success: true }` |
+| `GET /admin/projects` | `x-admin-password` | every project **including its API key** |
+
+Both admin endpoints check against the `ADMIN_PASSWORD` environment variable and
+nothing else.
+
+## Browser pages
+
+The server also serves three HTML pages from `public/`: `/project` for the live
+graph view, `/documentation`, and `/admin`.

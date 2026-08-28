@@ -29,10 +29,27 @@
   "navigation": {
     "pages": [
       {
-        "group": "Getting Started",
+        "group": "Getting started",
         "pages": [
           "index",
           "quickstart"
+        ]
+      },
+      {
+        "group": "Concepts",
+        "pages": [
+          "concepts/graph-model",
+          "concepts/enforcement",
+          "concepts/distance-drivers"
+        ]
+      },
+      {
+        "group": "Reference",
+        "pages": [
+          "reference/rest-api",
+          "reference/driver-protocol",
+          "reference/realtime",
+          "reference/data-model"
         ]
       }
     ],
@@ -84,6 +101,14 @@
           {
             "label": "Quickstart",
             "href": "/quickstart"
+          },
+          {
+            "label": "The graph model",
+            "href": "/concepts/graph-model"
+          },
+          {
+            "label": "REST API",
+            "href": "/reference/rest-api"
           }
         ]
       },

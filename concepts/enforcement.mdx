@@ -1,0 +1,74 @@
+---
+title: "How enforcement works"
+description: "From a plate at a camera to a recorded violation."
+---
+
+Nothing in the chain is clever. Each step does one thing, and the number that
+matters, the road distance, is the one the system refuses to guess.
+
+<Steps>
+  <Step title="The same vehicle is seen twice">
+    Every checkpoint records a plate and the moment it passed, and posts both to
+    `/report-checkpoint`. Enforcement begins when one plate appears at two
+    checkpoints that share an edge, not when it passes any single camera.
+  </Step>
+  <Step title="The road distance is resolved">
+    The server knows the two checkpoints are connected. It does not know how far
+    apart they are by road, so it asks a [distance
+    driver](/concepts/distance-drivers), which routes between them and answers
+    in metres.
+  </Step>
+  <Step title="Average speed is computed">
+    Distance divided by elapsed time gives the average speed across the whole
+    edge. Held against the edge's speed limit, the run either fits inside the
+    time the limit allows or it does not.
+  </Step>
+  <Step title="The run is recorded">
+    Every traversal is stored against its edge with its elapsed time. Violations
+    are the runs that crossed the edge faster than the limit permits, and they
+    are written to the `violations` table and pushed to any connected browser.
+  </Step>
+</Steps>
+
+## What the server tracks per vehicle
+
+The server keeps exactly one row per plate per project: the last checkpoint it
+was seen at, and when. A sighting is therefore always judged against the
+previous one, and the plate's history is not replayed.
+
+Three cases produce no violation:
+
+- **No previous sighting.** The plate is new, so there is nothing to measure
+  against. The sighting is recorded and the response has `status` of `false`.
+- **No edge between the two checkpoints.** The vehicle went somewhere that is
+  not enforced. Nothing is measured.
+- **A non positive elapsed time.** See below.
+
+## Out of order reports
+
+Checkpoint reports arrive over HTTP, so a later sighting can reach the server
+before an earlier one. When the elapsed time since the stored sighting is zero
+or negative, the request arrived after a newer one was already processed.
+
+The server ignores that request entirely: no violation, and the stored sighting
+is left alone rather than being overwritten with an older timestamp. The
+response carries `outOfOrder: true`.
+
+## Congestion
+
+Alongside violations, the server records every traversal with its elapsed time,
+and every three seconds it broadcasts a congestion figure per edge over
+Socket.IO.
+
+```
+congestion = average elapsed time over the last 5 minutes / minimum legal traversal time
+```
+
+A value near `1` means traffic is moving at roughly the limit. Higher means
+slower than the limit. Traversals older than five minutes are pruned, so the
+figure only reflects current conditions.
+
+<Note>
+  Congestion is derived from the same traversals that enforcement uses. It is a
+  read on the road, not a second measurement system.
+</Note>
