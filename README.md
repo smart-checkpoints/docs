@@ -1,4 +1,4 @@
-# Smart Checkpoints documentation
+# Smart Checkpoints Documentation
 
 Source for [docs.smartcheckpoints.xyz](https://docs.smartcheckpoints.xyz), built
 on [Mintlify](https://mintlify.com).

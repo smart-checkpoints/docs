@@ -52,6 +52,12 @@
         "tab": "Reference",
         "groups": [
           {
+            "group": "Surfaces",
+            "pages": [
+              "reference/console"
+            ]
+          },
+          {
             "group": "Interfaces",
             "pages": [
               "reference/rest-api",

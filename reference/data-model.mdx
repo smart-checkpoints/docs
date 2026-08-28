@@ -69,7 +69,7 @@ failed migration stops the server rather than letting it serve wrong positions.
     | `project_id` | INTEGER | |
     | `car_plate` | TEXT | |
     | `car_speed` | REAL | Average km/h across the edge |
-    | `timestamp` | TEXT | Time of the second sighting |
+    | `timestamp` | TEXT | ISO 8601 UTC, the time of the second sighting |
   </Accordion>
 
   <Accordion title="traversals" icon="stopwatch">
@@ -81,7 +81,7 @@ failed migration stops the server rather than letting it serve wrong positions.
     | `traversal_id` | INTEGER | Primary key |
     | `connection_id` | INTEGER | References `connections.connection_id` |
     | `delta_t` | REAL | Elapsed seconds across the edge |
-    | `timestamp` | TEXT | |
+    | `timestamp` | TEXT | ISO 8601 UTC |
   </Accordion>
 </AccordionGroup>
 
@@ -96,3 +96,12 @@ that has ever been seen by the project.
   record which edge it happened on. If you need that, read it from the
   `traversals` row with the matching timestamp.
 </Note>
+
+<Warning>
+  Every timestamp in a TEXT column is ISO 8601 in UTC, which is also what the
+  REST API accepts and what the realtime events carry. Databases created before
+  this hold `violations.timestamp` as stringified epoch milliseconds, such as
+  `"1787905380236.0"`, which no client can parse back into a time. Rows
+  written from now on are ISO; old rows are left as they are, and the console
+  reads both.
+</Warning>

@@ -8,21 +8,26 @@ one edge between them, and a vehicle that crosses it too fast.
 
 ## Prerequisites
 
-- Node.js 18 or newer
+- Node.js 20 or newer
 - The [server](https://github.com/smart-checkpoints/server) repository
 - A terminal that can send HTTP requests, such as `curl`
 
 ## Run the server
 
 <Steps>
-  <Step title="Install and start">
+  <Step title="Install, build and start">
     ```bash
     npm install
+    npm run build
     npm start
     ```
 
     The server listens on port `3000` unless `PORT` says otherwise, and creates
     `database.db` next to `server.js` on first run.
+
+    `npm run build` builds the [operator console](/reference/console) and
+    installs it as the server's static root. Skip it and the API still works;
+    only the browser pages are missing.
   </Step>
   <Step title="Create a project">
     A project is one deployment: its own checkpoints, its own edges, its own API
@@ -125,8 +130,8 @@ curl http://localhost:3000/project/1/violations -H "x-api-key: $API_KEY"
 ```
 
 <Tip>
-  The server ships a browser view of the same graph at
-  `http://localhost:3000/project`, which updates live over Socket.IO as nodes,
+  The [console](/reference/console) shows the same graph at
+  `http://localhost:3000`, and updates live over Socket.IO as checkpoints,
   edges, and violations arrive.
 </Tip>
 

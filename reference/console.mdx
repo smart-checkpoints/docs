@@ -1,0 +1,134 @@
+---
+title: "The console"
+description: "The operator surface the server ships with: the project list, the checkpoint graph, and the project table."
+---
+
+The server serves an operator console at its own root. It is the same interface
+the REST API and the [realtime channel](/reference/realtime) expose, drawn for a
+person: a list of the projects on the server, a live view of one project's
+checkpoint graph, and a table of every project for whoever holds the admin
+password.
+
+The console is a static site. It is built from the `console/` directory in the
+server repository and served out of `public/` by the same Express process that
+answers the API, so there is no second server, no second port, and no cross
+origin anywhere.
+
+<Info>
+  The console runs the same stack and the same design system as
+  [smartcheckpoints.xyz](https://smartcheckpoints.xyz): Next.js, TypeScript,
+  Tailwind and one set of tokens. A colour, a type step or a button that changes
+  on the website changes here too.
+</Info>
+
+## Building it
+
+`public/` is generated and is not in version control. After cloning the server,
+or after any change under `console/`:
+
+```bash
+npm install
+npm run build   # builds console/ and installs it into public/
+npm start
+```
+
+A server whose console has not been built still answers the REST API and both
+realtime channels normally. Only the pages are missing, and the pages say so.
+
+## Projects
+
+`GET /` lists every project on the server, each with the shape of its graph, its
+name, and how many checkpoints and edges it holds. The list is unauthenticated,
+because [`GET /list-projects`](/reference/rest-api) is.
+
+The shapes are not. Thumbnail geometry comes from
+`GET /project/{id}/thumbnail-data`, which projects the nodes onto the local
+tangent plane and normalises them into the unit square before sending them, so a
+thumbnail carries the shape of a deployment and never a camera's position.
+
+Opening a project needs its API key. There is no URL that opens a project on its
+own.
+
+## The graph
+
+`GET /project` is the live view of one project.
+
+| Gesture | What it does |
+| --- | --- |
+| Drag the background | Pans |
+| Wheel | Zooms about the pointer |
+| Drag from one checkpoint to another | Drafts an edge between them |
+| Click an edge | Opens it for editing |
+| <kbd>F</kbd> | Frames the whole graph |
+| <kbd>+</kbd> / <kbd>-</kbd> | Zooms |
+| <kbd>Esc</kbd> | Closes whatever is open |
+
+Checkpoints are drawn at a constant size on screen, whatever the zoom, so a
+graph that spans a city stays as clickable as one that spans a junction. The
+grid and the scale bar are in metres: this system enforces speed over real
+driving distance, and the view says how far a screen length actually is.
+
+### What the colours mean
+
+Colour follows the same rule as everywhere else in the system. The accent draws
+structure. The status colours mean something is measured, or something is wrong.
+
+| Colour | Meaning |
+| --- | --- |
+| Cyan | A checkpoint, and an edge that has a distance and a limit |
+| Yellow, dashed | An edge with no resolved distance. It cannot enforce anything |
+| Green to red | Live congestion, from free flowing to twice the expected travel time |
+| Red pulse on a checkpoint | A sighting just arrived at it |
+
+Everything on this page is live over the realtime channel. Checkpoints and edges
+created by cameras or by another operator appear as they are created, violations
+arrive as they are recorded, and the distance driver's status changes with it.
+
+### Editing an edge
+
+An edge carries two numbers, and enforcement is arithmetic on them: distance in
+metres, and the speed limit in km/h enforced as an average across it.
+
+<Note>
+  While a [distance driver](/concepts/distance-drivers) is attached the distance
+  field is read-only. The driver resolves distances from real road routing and
+  the server overwrites anything typed here the next time that driver
+  reconnects, so the console does not offer a field it cannot keep.
+</Note>
+
+### Adding a checkpoint
+
+Cameras normally create their own checkpoints over
+[`POST /create-node`](/reference/rest-api) as they come online. The console can
+also place one from a WGS84 coordinate pair, for laying a graph out ahead of the
+hardware. It validates the pair with the same rules the server applies on the
+way in.
+
+## Administration
+
+`GET /admin` lists every project on the server together with its API key, behind
+the `ADMIN_PASSWORD` set in the server's environment.
+
+The password is held in the page for as long as it is open and is never stored,
+so a reload asks for it again. Keys are masked until you ask for one.
+
+<Warning>
+  A server with no `ADMIN_PASSWORD` set has administration switched off, and this
+  page will say so rather than let anyone in.
+</Warning>
+
+## How credentials are held
+
+A project API key authenticates the console, every camera reporting sightings,
+and the project's distance driver. The console treats it accordingly.
+
+- It is held in `sessionStorage`, scoped to one tab and gone when that tab
+  closes.
+- It travels in the `x-api-key` header, never in a URL. A key in a query string
+  ends up in browser history, in the `Referer` of anything the page loads, and
+  in every proxy log along the way.
+- It is masked wherever it is displayed, and revealing it is a deliberate act.
+
+A project's key is shown in full exactly once, when the project is created.
+Nothing on the server will show it again to someone who does not already hold
+it.

@@ -14,7 +14,7 @@ through `dotenv`.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `PORT` | `3000` | HTTP and WebSocket port. |
-| `ADMIN_PASSWORD` | *(none)* | Guards both admin endpoints. Unset means no password can match. |
+| `ADMIN_PASSWORD` | *(none)* | Guards both admin endpoints. Unset disables them entirely. |
 | `WIFI_ADAPTER_NAME` | *(none)* | Named network adapter whose IPv4 address is printed at startup, so cameras on the same network know where to report. |
 
 ## Authentication
@@ -115,9 +115,21 @@ The response is the verdict for this sighting:
 | `GET /admin/projects` | `x-admin-password` | every project **including its API key** |
 
 Both admin endpoints check against the `ADMIN_PASSWORD` environment variable and
-nothing else.
+nothing else. The comparison is on digests, so neither the password nor its
+length leaks by timing.
+
+<Warning>
+  With `ADMIN_PASSWORD` unset, both endpoints answer `503` and administration is
+  off. Earlier builds compared an absent header against an absent variable and
+  found them equal, which served every project's API key to anyone who asked.
+  Set `ADMIN_PASSWORD` on any server you expose.
+</Warning>
 
 ## Browser pages
 
-The server also serves three HTML pages from `public/`: `/project` for the live
-graph view, `/documentation`, and `/admin`.
+The server also serves the [operator console](/reference/console) from
+`public/`: `/` for the project list, `/project` for the live graph, and `/admin`
+for the project table.
+
+`/documentation` is not a page on the server. It answers `308` and sends the
+reader here, which is the one place this system's documentation lives.
