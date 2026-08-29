@@ -15,9 +15,14 @@
 - A **checkpoint** is the physical camera. A **node** is its record in the graph
 - An **edge** is an enforced stretch of road, stored in the `connections` table.
   Prefer "edge" in prose and `connection` only when naming the database or API field
-- A **distance driver** is the external process that answers road distances.
-  Never shorten it to "driver" alone on first use in a page
-- A **project** is one deployment behind one API key
+- A **distance driver** is the external process that answers road distances. A
+  **map driver** is the external process that serves the console's map view.
+  Never shorten either to "driver" alone on first use in a page
+- A **project** is one deployment. Its own key is an **operator key** (full read
+  and write); a **reporter key** is issued per camera and can only report a
+  sighting
+- An edge carries a **`distance_status`** of `ok`, `unknown`, or `no-route`.
+  Only `ok` enforces; `distance` is NULL otherwise. There is no placeholder zero
 - Distances are always metres, speed limits always km/h, coordinates always WGS84
 
 ## Style preferences
@@ -31,8 +36,9 @@
 
 ## Content boundaries
 
-- Document the behaviour that exists, including the sharp edges. The silent zero
-  on an unanswered distance request is documentation, not a bug report
+- Document the behaviour that exists, including the sharp edges. An edge that
+  silently stops enforcing because its distance is `unknown` is documentation,
+  not a bug report
 - Do not document the admin pages beyond the fact that they exist and how they
   authenticate
 - Do not invent endpoints, fields, or environment variables. If it is not in the

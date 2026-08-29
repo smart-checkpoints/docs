@@ -61,9 +61,25 @@ allows. Distances are always metres and speed limits are always km/h. A driver
 that answers in kilometres, or a limit entered in mph, produces violations that
 look perfectly normal.
 
+## Resolved and unresolved edges
+
+An edge does not always have a distance. Whether it does is a stored fact, not
+an inference: every edge carries a `distance_status`.
+
+| `distance_status` | Meaning | Enforcement |
+| --- | --- | --- |
+| `ok` | A driver routed it, or an operator typed it | Runs normally |
+| `unknown` | Nobody has answered yet, or a driver failed transiently | Skipped. The edge is shown as not enforcing |
+| `no-route` | A distance driver said there is no road here | Skipped. Flagged as a data error |
+
+`distance` is `null` whenever the status is not `ok`, and a `distance` of `0` is
+rejected on the way in. Both the violation path and the congestion figure skip
+any edge whose status is not `ok`.
+
 <Note>
-  An edge with a distance of `0` can never produce a violation, because no
-  vehicle can be too fast over no distance. This is what an unmeasured edge
-  looks like in the database, and it is why a missing distance driver fails
-  quietly rather than loudly.
+  A missing distance driver fails quietly rather than loudly, but visibly: the
+  edge sits at `unknown`, the console draws it with a broken stroke, and no
+  vehicle it carries is ever judged. The server never substitutes a
+  straight-line estimate for a road distance nobody measured, because a
+  plausible wrong distance produces violations that look exactly like real ones.
 </Note>

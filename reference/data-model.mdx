@@ -4,22 +4,27 @@ description: "The SQLite tables behind the graph."
 ---
 
 The server stores everything in one SQLite file, `database.db`, created next to
-`server.js` on first run. The schema is created and migrated at startup, and a
-failed migration stops the server rather than letting it serve wrong positions.
+`server.js` on first run. It runs in WAL mode. The schema is created and
+migrated at startup, and a failed migration stops the server rather than letting
+it serve wrong positions.
 
 ## Tables
 
 <AccordionGroup>
   <Accordion title="projects" icon="folder">
-    One deployment and its API key.
+    One deployment, its operator key, and its map view state.
 
     | Column | Type | Notes |
     | --- | --- | --- |
     | `project_id` | INTEGER | Primary key |
     | `project_name` | TEXT | |
-    | `api_key` | TEXT | 32 characters, generated on creation |
+    | `api_key` | TEXT | 32 characters, generated on creation. The project's operator key |
     | `node_count` | INTEGER | |
     | `connection_count` | INTEGER | |
+    | `map_driver_url` | TEXT | Approved map view address, or NULL |
+    | `map_driver_origin` | TEXT | Its origin, checked on every `postMessage` |
+    | `map_driver_status` | TEXT | `none`, `pending`, or `approved` |
+    | `pending_map_driver_url` | TEXT | An announced address awaiting approval, or NULL |
   </Accordion>
 
   <Accordion title="nodes" icon="location-dot">
@@ -43,8 +48,28 @@ failed migration stops the server rather than letting it serve wrong positions.
     | `project_id` | INTEGER | |
     | `from_node_id` | INTEGER | References `nodes.node_id` |
     | `to_node_id` | INTEGER | References `nodes.node_id` |
-    | `distance` | REAL | Metres. `0` means unmeasured |
+    | `distance` | REAL | Metres. NULL whenever `distance_status` is not `ok`. `0` is never stored |
     | `speed_limit` | REAL | km/h |
+    | `distance_status` | TEXT | `ok`, `unknown`, or `no-route`. Only `ok` enforces |
+    | `distance_updated_at` | INTEGER | Epoch milliseconds when the distance was last decided |
+    | `path` | TEXT | Route geometry as GeoJSON `LineString` text, or NULL. Stored, never parsed |
+    | `path_format` | TEXT | `geojson-linestring-wgs84` when `path` is set |
+    | `endpoint_offsets` | TEXT | JSON `[fromOffset, toOffset]` in metres from each coordinate to the road, or NULL |
+    | `endpoints_hash` | TEXT | sha256 of the two positions the distance was measured between, for staleness detection |
+  </Accordion>
+
+  <Accordion title="api_keys" icon="key">
+    Every credential that is not a project's own operator key. Currently that is
+    one reporter key per camera.
+
+    | Column | Type | Notes |
+    | --- | --- | --- |
+    | `key_id` | INTEGER | Primary key |
+    | `project_id` | INTEGER | |
+    | `api_key` | TEXT | Unique. 32 characters |
+    | `role` | TEXT | `reporter` |
+    | `label` | TEXT | Operator-facing camera name, or NULL |
+    | `created_at` | TEXT | ISO 8601 UTC |
   </Accordion>
 
   <Accordion title="car_data" icon="car">
@@ -85,11 +110,25 @@ failed migration stops the server rather than letting it serve wrong positions.
   </Accordion>
 </AccordionGroup>
 
+## Migrations
+
+The schema is brought up to date at startup, and any failure stops the server.
+
+- `nodes.x_coord` / `nodes.y_coord` are renamed to `longitude` / `latitude`
+  (the old mapping was x = longitude, y = latitude, so no values move).
+- `connections` gains `distance_status` and `distance_updated_at`. Existing rows
+  with a distance above zero become `ok`; every other row becomes `unknown` with
+  the distance nulled, to be recalculated when a driver next connects.
+- `connections` gains `path`, `path_format`, `endpoint_offsets`, and
+  `endpoints_hash`. No backfill: a pre-existing edge has no geometry and a NULL
+  hash, which reads as "moved", so it is recalculated once.
+- `projects` gains the four `map_driver` columns, defaulting to status `none`.
+
 ## Retention
 
 `traversals` is the only table the server prunes, and only to the last five
-minutes. `violations` grows without bound, and `car_data` holds one row per plate
-that has ever been seen by the project.
+minutes. `violations` grows without bound, and `car_data` holds one row per
+plate that has ever been seen by the project.
 
 <Note>
   A violation records the plate, the average speed, and the time. It does not
@@ -101,7 +140,7 @@ that has ever been seen by the project.
   Every timestamp in a TEXT column is ISO 8601 in UTC, which is also what the
   REST API accepts and what the realtime events carry. Databases created before
   this hold `violations.timestamp` as stringified epoch milliseconds, such as
-  `"1787905380236.0"`, which no client can parse back into a time. Rows
-  written from now on are ISO; old rows are left as they are, and the console
-  reads both.
+  `"1787905380236.0"`, which no client can parse back into a time. Rows written
+  from now on are ISO; old rows are left as they are, and the console reads
+  both.
 </Warning>

@@ -5,79 +5,114 @@ description: "Why road distance lives outside the server, and the contract that 
 
 Road distance depends on a map, and a map is a dependency worth keeping outside
 the server. So a driver is a separate process: it opens a WebSocket,
-authenticates with a project API key, and waits.
+authenticates with a project's operator API key, and waits.
 
-The server sends two node indices and a request id. The driver answers with a
-number of metres against the same id. That is the whole contract: node indices
-in, metres out. It says nothing about how the distance is obtained, which is
-exactly what makes drivers interchangeable. An OSRM server, a commercial routing
-API, a table of surveyed distances, or figures measured by hand for a network no
-public map covers well all answer the same two messages.
+The server sends two checkpoint coordinates and a request id. The driver answers
+with a number of metres against the same id, and may include the shape of the
+road it found. That is the contract: coordinates in, metres out, geometry
+optional. It says nothing about how the distance is obtained, which is what makes
+drivers interchangeable. An OSRM server, a commercial routing API, a table of
+surveyed distances, or figures measured by hand for a network no public map
+covers well all answer the same messages.
+
+## Two kinds of driver
+
+A driver names its `role` when it authenticates.
+
+- A **distance driver** (`role: "distance"`, the default) answers
+  `calculate-distance` requests. It is what this page is about.
+- A **map driver** (`role: "map"`) is never asked anything. It announces the
+  address of its own map page and holds the socket open; the [console](/reference/console)
+  embeds that page as its map view for as long as the socket is up. See [The
+  map bridge](/reference/map-bridge).
+
+There is **one driver per role per project**. A second driver claiming an
+occupied slot evicts the first, which is closed with code `4001`.
 
 ## When the server asks
 
-- **A driver connects.** The server immediately recalculates every edge in the
-  project, so a reconnect re-measures the whole graph in one burst.
-- **An edge is created without a distance.** If a driver is connected, the
-  server asks before storing the edge.
+The server does not re-measure the whole graph on every reconnect. When a
+distance driver authenticates, the server asks about an edge only if one of
+three things is true:
 
-A driver should expect the entire graph to arrive at once and throttle itself
-accordingly.
+- its `distance_status` is not `ok`;
+- one of its checkpoints has moved since the distance was worked out;
+- it has no route geometry and this driver declares `capabilities.geometry`.
+
+"Has moved" is a stored fingerprint of the two positions the distance was
+measured between, rewritten whenever a distance is decided. A driver restarting
+on a project whose distances are all current sends nothing at all. An edge is
+also measured when it is [created](/reference/rest-api#nodes-and-edges) without a
+distance while a driver is connected, and when a checkpoint it touches is
+[moved](/concepts/data-quality#correcting-a-checkpoint-s-position).
+
+A driver should still expect a burst when it connects to a project with stale
+edges, and throttle itself accordingly.
 
 ## Run the reference driver
 
 [`driver-osrm`](https://github.com/smart-checkpoints/driver-osrm) resolves
 distances by asking an OSRM routing server for the driving route between two
-checkpoints. It does one thing: no geometry, no alternative routes, no caching,
-no fallback estimate.
+checkpoints, and returns the route shape alongside. It does one thing: no
+alternative routes, no caching, no fallback estimate.
 
 ```bash
-SC_API_KEY=your-project-key npm start
+SC_API_KEY=your-project-operator-key npm start
 ```
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `SC_WS_URL` | `ws://localhost:3000/distance-driver` | Driver WebSocket endpoint. |
-| `SC_API_KEY` | *(required)* | Project API key, used for the auth message and the `x-api-key` header. |
-| `SC_HTTP_URL` | origin of `SC_WS_URL` | REST base URL, if it is not on the same origin. |
+| `SC_API_KEY` | *(required)* | Project operator key, sent in the auth message. Not a camera's reporter key. |
 | `OSRM_BASE_URL` | `https://router.project-osrm.org` | OSRM server. The default is the public demo instance. |
-| `REQUEST_TIMEOUT_MS` | `5000` | Per attempt timeout for OSRM and the node lookup. |
+| `REQUEST_TIMEOUT_MS` | `5000` | Per attempt timeout for OSRM. |
 | `MAX_CONCURRENT_OSRM` | `4` | How many OSRM calls may be in flight at once. |
 
 <Note>
   The driver also reads the `GBDS_` names it originally shipped with
-  (`GBDS_WS_URL`, `GBDS_API_KEY`, `GBDS_HTTP_URL`), so an existing `.env` keeps
-  working. GBDS was the graph architecture inside the server rather than the
-  product name; `SC_` is what the ecosystem uses. Where both are set, `SC_`
-  wins.
+  (`GBDS_WS_URL`, `GBDS_API_KEY`), so an existing `.env` keeps working. Where
+  both are set, `SC_` wins. `SC_HTTP_URL` is no longer read: a protocol v2
+  driver gets checkpoint coordinates inside each request and never calls the
+  REST API.
 </Note>
 
 ## Write your own
 
 The full message shapes are in the [driver protocol
-reference](/reference/driver-protocol). A driver needs to do four things:
+reference](/reference/driver-protocol). A distance driver needs to do four
+things:
 
-1. Open a WebSocket to `/distance-driver` and send an `auth` message.
-2. Resolve node indices to coordinates over `GET /project/{id}/nodes`, since the
-   server sends indices rather than coordinates.
-3. Answer each `calculate-distance` with a `distance-result` carrying the same
-   `requestId` and a distance in metres.
-4. Reconnect with backoff when the socket drops.
+1. Open a WebSocket to `/distance-driver` and send an `auth` message naming
+   `protocolVersion: 2`.
+2. Answer each `calculate-distance` with a `distance-result` carrying the same
+   `requestId` and a distance in metres. The request carries the `from` and
+   `to` coordinates inline.
+3. Send a `distance-error` when it cannot answer, rather than going silent.
+4. Reconnect with backoff when the socket drops, keeping the total retry budget
+   under the server's 30 second request timeout.
 
-## Failing safe, and failing silent
+A protocol v1 driver that names no version still works: it reads the node
+indices in the request and resolves them itself over `GET /project/{id}/nodes`.
 
-A driver that cannot answer sends nothing at all. There is no failure message in
-the protocol: the server reads exactly two inbound types, `auth` and
-`distance-result`, and drops anything else.
+## Failing safe, and failing loud
 
-The server times the request out after 30 seconds rather than accepting a
-straight line guess, and stores `distance = 0` for that edge. That edge produces
-no violations at all, which is the safe outcome, but nothing surfaces on either
-side. The only record of the failure is the driver's own log.
+A driver that cannot answer sends a `distance-error` with a `code`:
+
+| `code` | What the server does |
+| --- | --- |
+| `no-route` | Sets the edge's `distance_status` to `no-route`. Definitive; not retried |
+| `unavailable` | Sets `distance_status` to `unknown`. Retried on the next reconnect |
+| `invalid-input` | Sets `unknown`, and logs loudly: it means the server sent something unusable |
+
+Silence is treated differently. A request that times out after 30 seconds, or
+dies with its socket, leaves the edge exactly as it was: nobody has said
+anything about that road, and a distance that was right an hour ago is still the
+best thing known. The server never fills the gap with a straight line.
 
 <Warning>
-  A node with a coordinate inside the valid range but in the wrong place still
-  routes. The driver produces a real route to the wrong location, and neither
-  side can tell. Verify checkpoint coordinates before you trust the distances
-  built on them.
+  A checkpoint with a coordinate inside the valid range but in the wrong place
+  still routes. The driver produces a real route to the wrong location, and the
+  distance looks fine. [Data quality](/concepts/data-quality) is where that
+  difference becomes visible. Verify checkpoint coordinates before you trust the
+  distances built on them.
 </Warning>

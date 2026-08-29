@@ -19,8 +19,8 @@ socket.on("joined", ({ project_id }) => { /* ... */ });
 socket.on("error", ({ message }) => { /* invalid API key */ });
 ```
 
-Immediately after joining, the server also sends the current
-`distance-driver-status`.
+The API key must be an operator key. Immediately after joining, the server sends
+the current `distance-driver-status` and `map-driver-status`.
 
 ## Events the server sends
 
@@ -28,12 +28,17 @@ Immediately after joining, the server also sends the current
 | --- | --- | --- |
 | `joined` | `{ project_id }` | The socket joined a project room |
 | `node-added` | `{ node_id, id_in_project, latitude, longitude }` | A checkpoint was created |
-| `connection-added` | `{ connection_id, from_node_id, to_node_id, distance, speed_limit }` | An edge was created |
-| `connection-updated` | `{ connection_id, distance, speed_limit }` | An edge was edited, or a driver re-measured it |
+| `node-moved` | `{ node_id, id_in_project, latitude, longitude }` | A checkpoint's position was corrected. A `connection-updated` follows for each edge it touched |
+| `connection-added` | `{ connection_id, from_node_id, to_node_id, distance, speed_limit, distance_status }` | An edge was created |
+| `connection-updated` | `{ connection_id, distance, speed_limit, distance_status }` | An edge was edited, a driver re-measured it, or a checkpoint move unresolved it |
 | `node-triggered` | `{ id_in_project, car_plate, violation }` | Any checkpoint report, violation or not |
 | `violation-added` | `{ car_plate, car_speed, timestamp }` | A traversal broke the limit |
-| `distance-driver-status` | `{ connected }` | A driver connected or disconnected |
+| `distance-driver-status` | `{ connected }` | A distance driver connected or disconnected |
+| `map-driver-status` | `{ connected, status, url, origin, pending_url }` | On join, when a map driver connects or drops, and after every approval decision. See [The map bridge](/reference/map-bridge) |
 | `congestion-update` | `{ [connection_id]: ratio }` | Every 3 seconds, for edges with recent traffic |
+
+On `connection-added` and `connection-updated`, `distance` is `null` whenever
+`distance_status` is not `ok`.
 
 `node-triggered` fires for every report, so use it to animate the graph.
 `violation-added` fires only for violations.

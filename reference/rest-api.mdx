@@ -4,7 +4,8 @@ description: "Every HTTP endpoint the server exposes."
 ---
 
 The server listens on port `3000` unless `PORT` says otherwise. All request and
-response bodies are JSON.
+response bodies are JSON. Request bodies are kebab-case; rows come back
+snake_case. That asymmetry is part of the wire protocol.
 
 ## Server environment
 
@@ -14,25 +15,41 @@ through `dotenv`.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `PORT` | `3000` | HTTP and WebSocket port. |
+| `HOST` | `127.0.0.1` | Interfaces to bind. Loopback by default, so nothing else on the network can reach the server. Set `0.0.0.0` to open it to cameras and drivers. |
 | `ADMIN_PASSWORD` | *(none)* | Guards both admin endpoints. Unset disables them entirely. |
-| `WIFI_ADAPTER_NAME` | *(none)* | Named network adapter whose IPv4 address is printed at startup, so cameras on the same network know where to report. |
+| `WIFI_ADAPTER_NAME` | `Wi-Fi` | Named network adapter whose IPv4 address is printed at startup, so cameras on the same network know where to report. |
+
+The server prints at startup whether it is loopback-only or open, and where
+cameras should report.
 
 ## Authentication
 
-Most endpoints authenticate with a project API key in a header:
+Most endpoints authenticate with an API key in a header:
 
 ```
-x-api-key: <project api key>
+x-api-key: <api key>
 ```
 
-A missing key answers `401 Missing API key`, an unknown one answers
-`401 Invalid API key`. Endpoints that take a project id in the path also check
-that the key belongs to that project, and answer `403` if it does not.
+There are two kinds of key.
+
+| Role | Held by | Can do |
+| --- | --- | --- |
+| `operator` | the console, administrators, the distance driver | everything, on its own project |
+| `reporter` | one camera each | `POST /report-checkpoint` only, for its own project |
+
+A project's key, the one `/create-project` returns and `/admin` lists, is its
+operator key. Reporter keys are issued per camera; see [Reporter
+keys](#reporter-keys).
+
+A missing key answers `401 Missing API key`, an unknown one `401 Invalid API
+key`. A real key of the wrong role answers `403` with a message naming the role
+required. Endpoints that take a project id in the path also check that the key
+belongs to that project, and answer `403` if it does not.
 
 <Warning>
-  `/create-project`, `/list-projects`, and `/project/{id}/thumbnail-data` require
-  no authentication at all. Anyone who can reach the port can create a project
-  and enumerate the existing ones.
+  `/create-project`, `/authenticate`, `/list-projects`, and
+  `/project/{id}/thumbnail-data` require no authentication at all. Anyone who
+  can reach the port can create a project and enumerate the existing ones.
 </Warning>
 
 ## Projects
@@ -43,38 +60,56 @@ that the key belongs to that project, and answer `403` if it does not.
 | `POST /authenticate` | none | `{ "api-key" }` | `{ project_id, project_name }` |
 | `GET /list-projects` | none | | every project, without its key |
 
-`/create-project` generates a fresh 32 character key. `/authenticate` turns a key
-back into a project id, and answers `401` if the key is unknown.
+`/create-project` generates a fresh 32 character key, which is the project's
+operator key. `/authenticate` turns an operator key back into a project id; it
+answers `401` if the key is unknown, and `403` with a message if the key is a
+valid reporter key rather than an operator key.
 
 ## Nodes and edges
 
 | Endpoint | Auth | Body | Answers |
 | --- | --- | --- | --- |
-| `POST /create-node` | `x-api-key` | `{ "latitude", "longitude" }` | `{ node_id, id_in_project }` |
-| `POST /create-connection` | `x-api-key` | `{ "from-node-id", "to-node-id", "speed-limit", "distance"? }` | `{ connection_id }` |
-| `PUT /connection/{id}` | `x-api-key` | `{ "distance", "speed-limit" }` | `{ success: true }` |
-| `GET /project/{id}/nodes` | `x-api-key` | | `[{ node_id, id_in_project, latitude, longitude }]` |
-| `GET /project/{id}/connections` | `x-api-key` | | `[{ connection_id, from_node_id, to_node_id, distance, speed_limit }]` |
+| `POST /create-node` | operator | `{ "latitude", "longitude" }` | `{ node_id, id_in_project }` |
+| `PUT /node/{id}` | operator | `{ "latitude", "longitude" }` | `{ success, node_id, id_in_project, latitude, longitude, connections_invalidated }` |
+| `POST /create-connection` | operator | `{ "from-node-id", "to-node-id", "speed-limit", "distance"? }` | `{ connection_id }` |
+| `PUT /connection/{id}` | operator | `{ "speed-limit", "distance"? }` | `{ success: true }` |
+| `GET /project/{id}/nodes` | operator | | `[{ node_id, id_in_project, latitude, longitude }]` |
+| `GET /project/{id}/connections` | operator | | `[{ connection_id, from_node_id, to_node_id, distance, speed_limit, distance_status, distance_updated_at }]` |
 
 Coordinates are WGS84 degrees, and anything outside latitude &plusmn;90 or
 longitude &plusmn;180 answers `400`.
 
 On `/create-connection` the node fields are `node_id` values, `speed-limit` is
-km/h and `distance` is metres. Omit `distance` and the server asks the connected
-[distance driver](/concepts/distance-drivers) for it. With no driver connected,
-or on a driver failure, the edge is stored with a `distance` of `0`.
+km/h, and `distance` is metres and must be greater than `0`. Omit `distance` and
+the server asks the connected [distance driver](/concepts/distance-drivers) for
+it. With no driver connected, the edge is stored unresolved: `distance` is
+`null` and `distance_status` is `unknown`. A driver that answers `no-route`
+leaves it at `no-route`. An [unresolved edge enforces
+nothing](/concepts/graph-model#resolved-and-unresolved-edges).
+
+`PUT /connection/{id}` with `distance` omitted changes only the speed limit and
+leaves the stored distance and its status untouched, which is the only way to
+edit an edge a driver owns or one nobody has resolved. Supplying `distance` sets
+the status to `ok`.
+
+`PUT /node/{id}` corrects a checkpoint's position. `{id}` is a node id. Every
+edge touching the checkpoint loses its distance and stops enforcing until a
+driver re-measures it; `connections_invalidated` is how many that was. See
+[Correcting a checkpoint's
+position](/concepts/data-quality#correcting-a-checkpoint-s-position).
 
 ## Checkpoints and violations
 
 ```http
 POST /report-checkpoint
-x-api-key: <project api key>
+x-api-key: <operator or reporter key>
 
 { "car-plate": "ABC-123", "id-in-project": 1, "timestamp": "2026-01-01T10:01:00Z" }
 ```
 
-This takes `id_in_project`, not `node_id`. Omit `timestamp` and the server uses
-its own clock. An index that does not exist in the project answers `404`.
+This is the one endpoint a reporter key reaches. It takes `id_in_project`, not
+`node_id`. Omit `timestamp` and the server uses its own clock. An index that
+does not exist in the project answers `404`.
 
 The response is the verdict for this sighting:
 
@@ -85,7 +120,8 @@ The response is the verdict for this sighting:
   "legalLimit": 60,
   "timestamp": "2026-01-01T10:01:00.000Z",
   "nodeId": 2,
-  "carPlate": "ABC-123"
+  "carPlate": "ABC-123",
+  "reason": null
 }
 ```
 
@@ -94,24 +130,77 @@ The response is the verdict for this sighting:
 | `status` | `true` when this traversal is a violation |
 | `carSpeed` | Average km/h across the edge |
 | `legalLimit` | The edge's speed limit in km/h |
+| `reason` | Why no violation was computed: `first-sighting`, `no-edge`, `distance-not-resolved`, `out-of-order`, or `null` for a normal result |
+| `distanceStatus` | Present when `reason` is `distance-not-resolved`: the edge's `distance_status` |
 | `outOfOrder` | Present and `true` when the report arrived after a newer one, in which case nothing is recorded |
 
 <Note>
-  When there is no previous sighting, or no edge between the previous checkpoint
-  and this one, `status` is `false` and the speed fields carry placeholder
-  values. Read `status` alone, never `carSpeed` on its own.
+  When `reason` is not `null`, `status` is `false` and the speed fields carry
+  placeholder values. Read `status` alone, never `carSpeed` on its own.
 </Note>
 
-`GET /project/{id}/violations` with `x-api-key` returns the recorded violations:
-`[{ violation_id, project_id, car_plate, car_speed, timestamp }]`.
+`GET /project/{id}/violations` with an operator key returns the recorded
+violations, newest first: `[{ violation_id, car_plate, car_speed, timestamp }]`.
+
+## Data quality
+
+| Endpoint | Auth | Answers |
+| --- | --- | --- |
+| `GET /project/{id}/diagnostics` | operator | `{ thresholds, nodes, connections }` |
+
+Computed on request and never stored. Every flag comes back with the numbers
+behind it and the thresholds it was judged against. See [Data
+quality](/concepts/data-quality).
+
+## Route geometry
+
+| Endpoint | Auth | Answers |
+| --- | --- | --- |
+| `GET /project/{id}/geometry` | operator | `[{ connection_id, path, path_format }]` |
+
+Only edges that have geometry are returned. `path` is the GeoJSON `LineString`
+text a driver sent, forwarded inside a JSON string without being parsed. It is
+served separately from `/connections` because it can be a quarter of a megabyte
+per edge and most sessions never draw a map.
+
+## The map view
+
+| Endpoint | Auth | Body | Answers |
+| --- | --- | --- | --- |
+| `GET /project/{id}/map-driver` | operator | | `{ connected, status, url, origin, pending_url }` |
+| `POST /project/{id}/map-driver/approve` | operator | `{ "url" }` | the new state, or `409` if `url` is not the pending address |
+| `POST /project/{id}/map-driver/reject` | operator | | the new state |
+| `POST /project/{id}/map-driver/revoke` | operator | | the new state |
+
+`status` is `none`, `pending`, or `approved`. A map driver announces the address
+of its own UI when it connects, and only an approved address is embedded by the
+console. `approve` names the address being approved so a driver that
+re-announced something else in the meantime is caught. See [The map
+bridge](/reference/map-bridge).
+
+## Reporter keys
+
+One key per camera, each able to do nothing but `POST /report-checkpoint` for
+its own project. All three endpoints need the project's operator key.
+
+| Endpoint | Body | Answers |
+| --- | --- | --- |
+| `POST /project/{id}/reporter-keys` | `{ "label"? }` | `201 { key_id, api_key, role, label }` |
+| `GET /project/{id}/reporter-keys` | | `[{ key_id, role, label, created_at, key_prefix }]` |
+| `DELETE /project/{id}/reporter-keys/{keyId}` | | `{ success: true }`, or `404` |
+
+`label` is optional free text of at most 60 characters. The `api_key` is
+returned once, on creation, and never again: the list gives back a
+six-character `key_prefix`, enough to match a key to a camera and revoke the
+right one. A lost key is revoked and reissued.
 
 ## Operations
 
 | Endpoint | Auth | Answers |
 | --- | --- | --- |
-| `GET /project/{id}/distance-driver-status` | `x-api-key` | `{ connected: boolean }` |
-| `GET /project/{id}/thumbnail-data` | none | node and edge geometry, for a project preview |
-| `POST /admin/auth` | body password | `{ success: true }` |
+| `GET /project/{id}/distance-driver-status` | operator | `{ connected: boolean }` |
+| `GET /project/{id}/thumbnail-data` | none | node and edge geometry, projected and normalised into the unit square so no camera position is disclosed |
+| `POST /admin/auth` | body `{ password }` | `{ success: true }` or `401` |
 | `GET /admin/projects` | `x-admin-password` | every project **including its API key** |
 
 Both admin endpoints check against the `ADMIN_PASSWORD` environment variable and
@@ -119,17 +208,17 @@ nothing else. The comparison is on digests, so neither the password nor its
 length leaks by timing.
 
 <Warning>
-  With `ADMIN_PASSWORD` unset, both endpoints answer `503` and administration is
-  off. Earlier builds compared an absent header against an absent variable and
-  found them equal, which served every project's API key to anyone who asked.
-  Set `ADMIN_PASSWORD` on any server you expose.
+  With `ADMIN_PASSWORD` unset, both admin endpoints answer `503` and
+  administration is off. Set `ADMIN_PASSWORD` on any server you expose: a
+  project API key is full read and write on that project.
 </Warning>
 
 ## Browser pages
 
 The server also serves the [operator console](/reference/console) from
-`public/`: `/` for the project list, `/project` for the live graph, and `/admin`
-for the project table.
+`console/out`: `/` for the project list, `/project` for the live graph, and
+`/admin` for the project table. A server whose console has not been built
+answers these three with a `503` and a message saying to run `npm run build`.
 
 `/documentation` is not a page on the server. It answers `308` and sends the
 reader here, which is the one place this system's documentation lives.

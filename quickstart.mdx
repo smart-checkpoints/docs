@@ -25,6 +25,11 @@ one edge between them, and a vehicle that crosses it too fast.
     The server listens on port `3000` unless `PORT` says otherwise, and creates
     `database.db` next to `server.js` on first run.
 
+    By default it binds loopback only, so nothing else on the network can reach
+    it. That is fine for this walkthrough, where `curl` runs on the same
+    machine. To let real cameras and drivers connect, set `HOST=0.0.0.0`. See
+    [Server environment](/reference/rest-api#server-environment).
+
     `npm run build` builds the [operator console](/reference/console) and
     installs it as the server's static root. Skip it and the API still works;
     only the browser pages are missing.
@@ -43,14 +48,18 @@ one edge between them, and a vehicle that crosses it too fast.
     { "project_id": 1, "api_key": "Xk3pQ9..." }
     ```
 
-    Keep the key. Every other request needs it in the `x-api-key` header.
+    Keep the key. This is the project's **operator key**: full read and write on
+    the project, and what every request below sends in the `x-api-key` header. A
+    camera in the field should hold a narrower [reporter
+    key](/reference/rest-api#reporter-keys) instead, but the operator key works
+    everywhere, which keeps this walkthrough to one credential.
   </Step>
 </Steps>
 
 <Warning>
-  `/create-project` and `/list-projects` are unauthenticated. Anyone who can
-  reach the port can create a project and list the existing ones. Keep the
-  server behind a network boundary you control.
+  `/create-project`, `/list-projects`, and `/project/{id}/thumbnail-data` are
+  unauthenticated. Anyone who can reach the port can create a project and list
+  the existing ones. Keep the server behind a network boundary you control.
 </Warning>
 
 ## Build the graph
@@ -82,11 +91,13 @@ one edge between them, and a vehicle that crosses it too fast.
     ```
 
     Note that `from-node-id` and `to-node-id` are `node_id` values, not
-    `id_in_project`.
+    `id_in_project`. A `distance` of `0` is rejected: it must be a positive
+    number of metres.
 
     Omit `distance` and the server asks the connected distance driver for it. If
-    no driver is connected, the edge is stored with `distance` of `0`, which
-    can never produce a violation. See [Distance
+    no driver is connected, the edge is stored unresolved: its `distance` is
+    `null` and its `distance_status` is `unknown`, and an unresolved edge
+    enforces nothing until a distance is filled in. See [Distance
     drivers](/concepts/distance-drivers).
   </Step>
 </Steps>

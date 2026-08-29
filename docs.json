@@ -43,7 +43,8 @@
             "pages": [
               "concepts/graph-model",
               "concepts/enforcement",
-              "concepts/distance-drivers"
+              "concepts/distance-drivers",
+              "concepts/data-quality"
             ]
           }
         ]
@@ -62,7 +63,8 @@
             "pages": [
               "reference/rest-api",
               "reference/realtime",
-              "reference/driver-protocol"
+              "reference/driver-protocol",
+              "reference/map-bridge"
             ]
           },
           {

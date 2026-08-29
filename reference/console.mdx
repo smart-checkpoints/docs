@@ -6,8 +6,8 @@ description: "The operator surface the server ships with: the project list, the 
 The server serves an operator console at its own root. It is the same interface
 the REST API and the [realtime channel](/reference/realtime) expose, drawn for a
 person: a list of the projects on the server, a live view of one project's
-checkpoint graph, and a table of every project for whoever holds the admin
-password.
+checkpoint graph with its diagnostics and its camera keys, and a table of every
+project for whoever holds the admin password.
 
 The console is a static site. It is built from the `console/` directory in the
 server repository, and the same Express process that answers the API serves the
@@ -51,13 +51,24 @@ own.
 
 ## The graph
 
-`GET /project` is the live view of one project.
+`GET /project` is the live view of one project. It has two views of the same
+geometry, toggled in the corner:
+
+- The **graph view** draws straight lines on a blank background. It is always
+  available, needs no driver, and is the only view that edits.
+- The **map view** embeds a [map driver's](/reference/map-bridge) page, drawing
+  the real road shapes a distance driver measured on a basemap. It exists only
+  while a map driver is connected and its address is approved, and the console
+  falls back to the graph view whenever it is not there.
+
+These gestures are the graph view's:
 
 | Gesture | What it does |
 | --- | --- |
 | Drag the background | Pans |
 | Wheel | Zooms about the pointer |
 | Drag from one checkpoint to another | Drafts an edge between them |
+| Shift-drag a checkpoint | Proposes a move to that position |
 | Click an edge | Opens it for editing |
 | <kbd>F</kbd> | Frames the whole graph |
 | <kbd>+</kbd> / <kbd>-</kbd> | Zooms |
@@ -75,14 +86,17 @@ structure. The status colours mean something is measured, or something is wrong.
 
 | Colour | Meaning |
 | --- | --- |
-| Cyan | A checkpoint, and an edge that has a distance and a limit |
-| Yellow, dashed | An edge with no resolved distance. It cannot enforce anything |
+| Cyan | A checkpoint, and an edge that is enforcing: `distance_status` of `ok` |
+| Dashed | An edge with `distance_status` of `unknown`. Nobody has resolved its distance; it cannot enforce anything |
+| Dotted | An edge with `distance_status` of `no-route`. A driver said there is no road here |
 | Green to red | Live congestion, from free flowing to twice the expected travel time |
 | Red pulse on a checkpoint | A sighting just arrived at it |
 
 Everything on this page is live over the realtime channel. Checkpoints and edges
-created by cameras or by another operator appear as they are created, violations
-arrive as they are recorded, and the distance driver's status changes with it.
+created by cameras or by another operator appear as they are created, checkpoints
+that are moved jump to their new position, violations arrive as they are
+recorded, and both the distance driver's status and the map driver's status
+change with them.
 
 ### Editing an edge
 
@@ -90,10 +104,11 @@ An edge carries two numbers, and enforcement is arithmetic on them: distance in
 metres, and the speed limit in km/h enforced as an average across it.
 
 <Note>
-  While a [distance driver](/concepts/distance-drivers) is attached the distance
-  field is read-only. The driver resolves distances from real road routing and
-  the server overwrites anything typed here the next time that driver
-  reconnects, so the console does not offer a field it cannot keep.
+  While a [distance driver](/concepts/distance-drivers) is attached, the console
+  keeps the distance field read-only and lets you edit only the speed limit. The
+  driver owns the distance, and mixing a hand-typed number with routed ones
+  makes it unclear which is which. Editing only the limit leaves the stored
+  distance and its status untouched.
 </Note>
 
 ### Adding a checkpoint
@@ -103,6 +118,41 @@ Cameras normally create their own checkpoints over
 also place one from a WGS84 coordinate pair, for laying a graph out ahead of the
 hardware. It validates the pair with the same rules the server applies on the
 way in.
+
+### Moving a checkpoint
+
+Shift-drag a checkpoint to propose a new position. The graph is geometrically
+faithful, so the drop point is a real coordinate. Nothing is sent until a dialog
+confirms it: it shows how far the camera would move in metres and how many
+connections stop enforcing as a result, because every distance measured to that
+checkpoint is discarded on a move. See [Correcting a checkpoint's
+position](/concepts/data-quality#correcting-a-checkpoint-s-position).
+
+## Data quality
+
+A panel on the project view shows what
+[`GET /project/{id}/diagnostics`](/reference/rest-api#data-quality) returns:
+checkpoints that look mispositioned and edges whose road distance does not match
+the straight line. It is recomputed when the panel is opened and when you ask.
+Every flag is shown with the numbers behind it and the thresholds it was judged
+against. See [Data quality](/concepts/data-quality).
+
+## Reporter keys
+
+A panel on the project view issues, lists, and revokes the per-camera
+[reporter keys](/reference/rest-api#reporter-keys). A new key is shown in full
+exactly once, when it is issued; after that the list shows only a six-character
+prefix, enough to tell one camera's key from another's. Issuing them needs the
+project's operator key, which is the one the console holds.
+
+## The map view
+
+The map view is served by a separate **map driver** process and embedded in an
+`<iframe>`. Before the console will embed it, an operator approves the address
+the driver announced, under **Project**. Approving, rejecting, and revoking that
+address all happen here. If a driver's socket is up but its page will not load,
+the console says so over the frame and names the address. See [The map
+bridge](/reference/map-bridge).
 
 ## Administration
 
@@ -119,8 +169,10 @@ so a reload asks for it again. Keys are masked until you ask for one.
 
 ## How credentials are held
 
-A project API key authenticates the console, every camera reporting sightings,
-and the project's distance driver. The console treats it accordingly.
+The console holds a project's **operator key**: full read and write on the
+project, and the key a distance driver and an administrator also use. Cameras in
+the field hold narrower [reporter keys](/reference/rest-api#reporter-keys),
+issued from the console. The console treats the operator key accordingly.
 
 - It is held in `sessionStorage`, scoped to one tab and gone when that tab
   closes.

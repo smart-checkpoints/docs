@@ -8,8 +8,9 @@ on [Mintlify](https://mintlify.com).
 ```
 index.mdx            Introduction
 quickstart.mdx       Server to first violation
-concepts/            The graph model, enforcement, distance drivers
-reference/           REST API, driver protocol, realtime events, data model
+concepts/            The graph model, enforcement, distance drivers, data quality
+reference/           REST API, realtime events, driver protocol, the map bridge,
+                     the console, data model
 docs.json            Navigation, theme, fonts, footer
 style.css            Mono font, applied on top of the docs.json theme
 logo/                Lockups for the light and dark navbar
@@ -35,4 +36,6 @@ Mintlify GitHub app.
 Every protocol and schema detail here is documented against the code in
 [`server`](https://github.com/smart-checkpoints/server) and
 [`driver-osrm`](https://github.com/smart-checkpoints/driver-osrm), not against a
-spec. When either changes, the reference pages change with it.
+spec. The driver protocol is v2; the REST, realtime, and storage references
+track `server.js`, `database.js`, `api-key-manager.js`, and `diagnostics.js`.
+When any of them changes, the reference pages change with it.

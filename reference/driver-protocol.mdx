@@ -1,10 +1,10 @@
 ---
 title: "Driver protocol"
-description: "The WebSocket contract between the server and a distance driver."
+description: "The WebSocket contract between the server and a distance or map driver."
 ---
 
-A distance driver connects over a raw WebSocket, not Socket.IO. Socket.IO on
-this server is for browser clients only.
+A driver connects over a raw WebSocket, not Socket.IO. Socket.IO on this server
+is for browser clients only.
 
 ```
 ws://<server-host>:3000/distance-driver
@@ -12,63 +12,144 @@ ws://<server-host>:3000/distance-driver
 
 The upgrade path lives on the same origin and port as the REST API.
 
+The server reads exactly three inbound message types: `auth`, `distance-result`,
+and `distance-error`. Anything else is dropped.
+
+## Protocol versions
+
+The current protocol is **v2**. A driver that names no `protocolVersion` in its
+`auth` message is treated as **v1** and keeps working exactly as it did: it
+reads the node indices in a request, resolves them to coordinates over
+[`GET /project/{id}/nodes`](/reference/rest-api), and answers with a bare
+distance. v2 reads the coordinates inline, may return route geometry, and can
+say why it failed.
+
+The version in the `authenticated` reply is the one the server will speak: the
+lower of the two.
+
 ## Authenticate
 
 Authentication is a message, not a header. The driver opens the socket with no
 special headers and immediately sends:
 
-```json
-{ "type": "auth", "apiKey": "<project api key>" }
+```jsonc
+{
+  "type": "auth",
+  "apiKey": "<project operator key>",
+  "protocolVersion": 2,
+  "role": "distance",
+  "driverName": "osrm",
+  "capabilities": { "geometry": true }
+}
 ```
+
+| Field | Meaning |
+| --- | --- |
+| `apiKey` | The project's operator key. A reporter key is rejected |
+| `protocolVersion` | Absent means v1. Higher than the server means the server's version |
+| `role` | `distance` (default) or `map`. An unrecognised role closes the socket with `4003` |
+| `driverName` | Free text, for the server's logs |
+| `capabilities` | Optional and additive. Logged, never gated. `geometry` tells the server this driver is worth asking to backfill route shapes |
 
 The server answers with one of:
 
 ```json
-{ "type": "authenticated", "projectId": 1 }
+{ "type": "authenticated", "projectId": 1, "protocolVersion": 2 }
 ```
 ```json
 { "type": "error", "message": "Invalid API key" }
 ```
 
-Keep the `projectId`. It is needed for the node lookup below. There is no
-handshake or heartbeat beyond this, and no ping or pong is configured on the
-socket.
+Keep the `projectId`. A v1 driver needs it for the node lookup. There is no
+application-level heartbeat, but the server pings the socket (see [Liveness](#liveness)).
+
+### One driver per role per project
+
+A second driver that authenticates for a role another socket already holds
+evicts the first. The old socket is closed with code `4001` and the reason
+`"replaced by a newer driver"`, and every request it still owed an answer for is
+failed immediately. A duplicate started by mistake should stop at the machine
+that started it, not sit there connected and idle.
 
 ## Answer distance requests
 
-The server addresses an edge by its two node indices and correlates the answer by
-`requestId`. There is no edge id and no coordinate in this message.
+The server addresses an edge by both its node indices and its checkpoint
+coordinates, and correlates the answer by `requestId`.
 
-```json
+```jsonc
 {
   "type": "calculate-distance",
   "requestId": "6f659d37-28bf-4fb7-9d39-6320585518e1",
   "fromIdInProject": 0,
-  "toIdInProject": 1
+  "toIdInProject": 1,
+  "from": { "latitude": 30.0444, "longitude": 31.2357 },
+  "to":   { "latitude": 30.0459, "longitude": 31.2243 }
 }
 ```
+
+A v2 driver routes on `from` and `to` directly. A v1 driver ignores them and
+resolves `fromIdInProject` / `toIdInProject` over the REST API.
 
 The driver answers with the same `requestId` and a distance in **metres**:
 
-```json
+```jsonc
 {
   "type": "distance-result",
   "requestId": "6f659d37-28bf-4fb7-9d39-6320585518e1",
-  "distance": 1767.5
+  "distance": 1767.5,
+  "path": {
+    "type": "LineString",
+    "coordinates": [[31.2357, 30.0444], [31.2301, 30.0450], [31.2243, 30.0459]]
+  },
+  "pathFormat": "geojson-linestring-wgs84",
+  "endpointOffsets": [4.2, 11.8]
 }
 ```
 
-Metres is the unit the violation maths expects. The server divides by a km/h
-speed limit and multiplies by 3.6 to get seconds.
+| Field | Meaning |
+| --- | --- |
+| `distance` | Metres. Required. The server divides by a km/h limit and multiplies by 3.6 to get seconds |
+| `path` | Optional. A GeoJSON `LineString` in WGS84, coordinates `[longitude, latitude]`. The only accepted `pathFormat` is `geojson-linestring-wgs84`. Stored as a string without being parsed, and dropped if it is not a LineString in that format or is over 256 KB. The distance is kept regardless |
+| `pathFormat` | Optional label for `path` |
+| `endpointOffsets` | Optional `[fromOffset, toOffset]` in metres: how far each requested coordinate was from the road the driver routed on. Feeds [data quality](/concepts/data-quality) |
 
-## Resolve coordinates
+Distance is what enforcement runs on; geometry is what a [map
+view](/reference/map-bridge) draws. Send only geometry you are confident in.
 
-The server sends node indices, so the driver resolves them itself over the REST
-API. This is the one place a driver uses the `x-api-key` header.
+## Say why, do not go silent
+
+A request the driver cannot answer gets a `distance-error`, not silence:
+
+```jsonc
+{
+  "type": "distance-error",
+  "requestId": "6f659d37-28bf-4fb7-9d39-6320585518e1",
+  "code": "no-route",
+  "message": "OSRM: NoRoute"
+}
+```
+
+| `code` | What the server does |
+| --- | --- |
+| `no-route` | Sets the edge's `distance_status` to `no-route`. Definitive; the edge is not asked about again |
+| `unavailable` | Sets `distance_status` to `unknown`. Retried on the next reconnect |
+| `invalid-input` | Sets `unknown`, and logs loudly: it means this server sent something unusable |
+
+Any unrecognised `code` is treated as `unavailable`. Never send a guessed or
+straight-line distance to avoid an error: a `no-route` edge produces no
+violations, while a plausible wrong number produces violations that look real.
+
+A request that neither results nor errors is handled by the server's own 30
+second timeout, which leaves the edge exactly as it was.
+
+## Resolve coordinates (v1 only)
+
+A v1 driver gets node indices and no coordinates, so it resolves them itself.
+This is the one place a driver uses the `x-api-key` header.
 
 ```
 GET http://<server-host>:3000/project/<projectId>/nodes
-x-api-key: <project api key>
+x-api-key: <project operator key>
 ```
 
 ```json
@@ -76,22 +157,31 @@ x-api-key: <project api key>
 ```
 
 Re-fetch on a cache miss so that nodes added while the driver is connected
-resolve without a restart.
+resolve without a restart. A v2 driver never calls this.
 
-## There is no failure event
+## Liveness
 
-The server's message handler reads exactly two inbound types, `auth` and
-`distance-result`. Anything else is dropped silently. There is no message a
-driver can send to say that an edge could not be resolved.
+- A socket that does not authenticate within **10 seconds** is closed with code
+  `4002`.
+- The server pings every driver every **30 seconds** and terminates a socket
+  that misses two pings, so a driver killed outright frees its project's slot in
+  about ninety seconds rather than whenever TCP notices. Every request that
+  socket still owed is failed at once.
+- `ws` answers pings itself, so a driver needs no code for this.
 
-A request the driver cannot answer is handled by the server's own 30 second
-timeout, after which the server stores `distance = 0` for that edge. Never send a
-guessed or straight line distance to avoid this: a zero produces no violations,
-while a plausible wrong number produces violations that look real.
+## Close codes
 
-## Expect the whole graph at once
+| Code | Meaning | Reconnect? |
+| --- | --- | --- |
+| `4001` | Replaced by a newer driver in the same role slot | No |
+| `4002` | Did not authenticate in time | Yes |
+| `4003` | Unrecognised `role` in the auth message | No |
 
-The server recalculates every edge in the project the moment a driver
-authenticates. On a reconnect that is the entire graph in one burst, so throttle
-outbound work and keep your total retry budget under the server's 30 second
-timeout.
+## Map drivers
+
+A map driver authenticates the same way with `role: "map"` and one extra field,
+`uiUrl`, naming the address of its own map page. It is never sent a
+`calculate-distance`. Holding the socket open is its whole function: the
+console's map view exists exactly while it is connected and its announced
+address is approved. The announce-and-approve flow and the `postMessage`
+contract are in [The map bridge](/reference/map-bridge).

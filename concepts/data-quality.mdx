@@ -1,0 +1,69 @@
+---
+title: "Data quality"
+description: "Finding a checkpoint that is in the wrong place, and moving it once you have."
+---
+
+A camera reports where it thinks it is, and nothing downstream questions it. A
+bad GPS fix does not fail: it produces enforcement measured between the wrong
+two points, and the violation that comes out is indistinguishable from a real
+one. Diagnostics are where that difference becomes visible.
+
+## The signals
+
+`GET /project/{id}/diagnostics` computes four signals from data the system
+already holds: checkpoint positions, road distances, and the offsets a driver
+reported between the coordinates it was given and the road network it routed on.
+Nothing is stored, because every number in it is wrong the moment a checkpoint
+moves. The [console](/reference/console) recomputes it when the diagnostics
+panel is opened.
+
+| Flag | On | Means |
+| --- | --- | --- |
+| `off-network` | a checkpoint | A driver reported this coordinate more than 150 m from the nearest road it could route on |
+| `impossible` | an edge | The road is shorter than the straight line: swapped coordinates, wrong units, or a broken driver |
+| `circuitous` | an edge | The road is at least 2.5x the straight line, on an edge at least 250 m long |
+| `suspect-position` | a checkpoint | At least two thirds of this checkpoint's judgeable edges are circuitous, and there are at least three of them |
+
+`suspect-position` is the one that matters. A single circuitous edge is almost
+always real geography: a river with a distant bridge, a rail corridor, a one-way
+system. A checkpoint with a bad fix inflates every edge that touches it, so the
+fraction is what separates a misplaced camera from an awkward junction.
+
+The 250 m floor matters as much. Two cameras on opposite sides of a divided road
+can be 30 m apart with a 400 m drive to the nearest U-turn, and a circuity of 27
+there is entirely correct.
+
+Every flag comes back with the numbers behind it (circuity, displacement, road
+distance, endpoint offsets) and with the `thresholds` it was judged against. The
+thresholds are educated starting points from how road networks generally behave,
+not values tuned against a real deployment.
+
+## Correcting a checkpoint's position
+
+`PUT /node/{id}` moves a checkpoint. The body is `{ latitude, longitude }` in
+WGS84 degrees, validated the same way `create-node` validates them. `{id}` is a
+node id, and the key must open the project that checkpoint belongs to.
+
+Moving a checkpoint throws away every distance measured to it:
+
+1. The position is updated.
+2. Every edge touching it loses its `distance`, its `distance_status` becomes
+   `unknown`, and its route geometry and endpoint offsets are cleared.
+3. If a distance driver is attached, those edges are measured again.
+4. `node-moved` goes out over the realtime channel, followed by a
+   `connection-updated` for each edge that just stopped enforcing.
+
+The stored distance was measured between two positions, one of which has just
+changed. Keeping it would enforce a road length that no longer corresponds to
+anything, and every violation it produced would look real. An edge with no
+distance enforces nothing, which is the correct state until a driver answers.
+
+A move to the coordinates a checkpoint already has changes nothing and
+invalidates nothing, so a retried request after a lost reply is free.
+
+<Note>
+  In the console, shift-drag a checkpoint across the graph. The graph is
+  geometrically faithful, so the drop point is a real position. The drag is a
+  proposal: the dialog says how far the camera would move in metres and how many
+  connections stop enforcing, and nothing is sent until that is agreed.
+</Note>

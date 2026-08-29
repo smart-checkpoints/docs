@@ -31,7 +31,8 @@ so there is no single point to slow down for.
 <Columns cols={2}>
   <Card title="The console" icon="table-columns" href="/reference/console">
     The operator surface the server ships with: the project list, the live
-    checkpoint graph, and the project table.
+    checkpoint graph and map view, its data-quality diagnostics, and the project
+    table.
   </Card>
   <Card title="The website" icon="globe" href="https://smartcheckpoints.xyz">
     What the system is and why it measures the road rather than the moment.
@@ -52,6 +53,13 @@ invisible one, and it produces violations that look exactly like real ones.
   </Card>
   <Card title="The graph model" icon="diagram-project" href="/concepts/graph-model">
     Projects, nodes, edges, and the arithmetic that decides a violation.
+  </Card>
+  <Card title="Data quality" icon="location-crosshairs" href="/concepts/data-quality">
+    How the system finds a checkpoint that is in the wrong place, and how to move
+    it once you have.
+  </Card>
+  <Card title="Distance driver protocol" icon="plug" href="/reference/driver-protocol">
+    The WebSocket contract: coordinates in, metres out, geometry optional.
   </Card>
 </Columns>
 

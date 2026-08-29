@@ -1,0 +1,90 @@
+---
+title: "The map bridge"
+description: "How a map driver's page is announced, approved, and fed state by the console."
+---
+
+The [console](/reference/console) draws the checkpoint graph as straight lines
+on a blank background. A **map driver** replaces that background with a real
+basemap: the console embeds the driver's own page in an `<iframe>` and forwards
+project state into it over `postMessage`. The map driver never opens a socket to
+the server, never talks to the distance driver, and never holds an API key.
+
+`driver-mapbox` is a reference implementation. The server never imports a
+mapping library and never learns whether the map is Mapbox, Leaflet, or anything
+else.
+
+## Announce, then approve
+
+A map driver connects to `/distance-driver` with `role: "map"` and a `uiUrl`
+field naming the address of its own page (see the [driver
+protocol](/reference/driver-protocol#map-drivers)). That address ends up inside
+the console's own chrome, so an announcement is only ever a proposal.
+
+| `status` | Meaning |
+| --- | --- |
+| `none` | Nothing announced, or approval withdrawn. Graph view only |
+| `pending` | A driver named an address nobody has agreed to. Not embedded |
+| `approved` | An operator approved this exact address. The only status that renders |
+
+The announced address lands in `pending_map_driver_url`. An operator approves it
+once, under **Project** in the console, via
+`POST /project/{id}/map-driver/approve` with the address in the body. Approving
+names the address, so a driver that re-announced something else in the meantime
+gets a `409` rather than an approval nobody read.
+
+Reconnecting on the same address stays approved. Announcing a **different**
+address drops the previous approval and returns to `pending`. `reject` discards
+a pending announcement; `revoke` withdraws approval entirely. Every connect,
+disconnect, and decision broadcasts `map-driver-status` to the project's console
+tabs.
+
+The server only serves route geometry to something that is drawing a map:
+`GET /project/{id}/geometry` returns the road shapes, and the console fetches it
+lazily the first time a map opens.
+
+## The frame
+
+The console holds the single Socket.IO connection and forwards state into the
+frame. Every message is `{ v: 2, type, payload }`. **Both sides pass the other's
+origin as `targetOrigin`, never `"*"`, and check `event.origin` on receipt.**
+The frame carries `sandbox="allow-scripts allow-same-origin"` and
+`referrerpolicy="origin"`. A frame whose approved origin is the console's own is
+refused: `allow-same-origin` would leave it not isolated from the console at
+all.
+
+Everything arriving from the frame is validated at runtime, shape and coordinate
+ranges included. A message that fails is dropped without a word.
+
+### Console to frame
+
+| Message | Payload |
+| --- | --- |
+| `sc:init` | `{ projectId, protocolVersion, origin: { lat, lng } }` |
+| `sc:graph` | `{ nodes: BridgeNode[], edges: BridgeEdge[] }` |
+| `sc:node-updated` | `{ node: BridgeNode }` |
+| `sc:edge-updated` | `{ edge: BridgeEdge }` |
+| `sc:congestion` | `{ [connection_id]: ratio }` |
+| `sc:diagnostics` | `{ nodes: { [node_id]: NodeFlag[] }, edges: { [connection_id]: EdgeFlag[] } }` |
+| `sc:selection` | `{ kind: "node" \| "edge", id } \| { kind: null, id: null }` |
+
+`BridgeNode` is `{ node_id, id_in_project, latitude, longitude, flags }`.
+`BridgeEdge` is `{ connection_id, from_node_id, to_node_id, distance,
+speed_limit, distance_status, path, flags }`, with `distance` and `path` null
+when the edge is unresolved.
+
+### Frame to console
+
+| Message | Payload |
+| --- | --- |
+| `sc:ready` | `{ protocolVersion, capabilities: { nodeDrag? } }` |
+| `sc:select` | a `BridgeSelection`, as above |
+| `sc:node-moved` | `{ nodeId, latitude, longitude }`, only from a driver that declared `capabilities.nodeDrag` |
+
+`sc:node-moved` takes exactly the path a shift-drag on the graph takes: the same
+confirmation dialog, in metres, and the same
+[`PUT /node/{id}`](/reference/rest-api#nodes-and-edges) endpoint. The map
+proposes; the console decides.
+
+The bridge protocol version is independent of the driver protocol version. The
+contract is typed in `console/src/lib/mapbridge.ts` and spelled nowhere else in
+the console.

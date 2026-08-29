@@ -12,11 +12,12 @@ matters, the road distance, is the one the system refuses to guess.
     `/report-checkpoint`. Enforcement begins when one plate appears at two
     checkpoints that share an edge, not when it passes any single camera.
   </Step>
-  <Step title="The road distance is resolved">
-    The server knows the two checkpoints are connected. It does not know how far
-    apart they are by road, so it asks a [distance
-    driver](/concepts/distance-drivers), which routes between them and answers
-    in metres.
+  <Step title="The road distance is already resolved, or the edge does not enforce">
+    The edge carries its road distance and a `distance_status`. The distance was
+    resolved earlier, when the edge was created or when a [distance
+    driver](/concepts/distance-drivers) last connected, not on the sighting. If
+    the status is not `ok` the edge enforces nothing: no speed is computed and
+    no traversal is recorded.
   </Step>
   <Step title="Average speed is computed">
     Distance divided by elapsed time gives the average speed across the whole
@@ -36,13 +37,20 @@ The server keeps exactly one row per plate per project: the last checkpoint it
 was seen at, and when. A sighting is therefore always judged against the
 previous one, and the plate's history is not replayed.
 
-Three cases produce no violation:
+Four cases produce no violation, and the response says which one through its
+`reason` field:
 
-- **No previous sighting.** The plate is new, so there is nothing to measure
-  against. The sighting is recorded and the response has `status` of `false`.
-- **No edge between the two checkpoints.** The vehicle went somewhere that is
-  not enforced. Nothing is measured.
-- **A non positive elapsed time.** See below.
+- **No previous sighting** (`first-sighting`). The plate is new, so there is
+  nothing to measure against. The sighting is recorded and the response has
+  `status` of `false`.
+- **No edge between the two checkpoints** (`no-edge`). The vehicle went
+  somewhere that is not enforced. Nothing is measured.
+- **The edge is not enforcing** (`distance-not-resolved`). Its `distance_status`
+  is `unknown` or `no-route`. No speed, no traversal, no violation. The response
+  also carries `distanceStatus`.
+- **A non positive elapsed time** (`out-of-order`). See below.
+
+A normal computed result carries `reason` of `null`.
 
 ## Out of order reports
 
