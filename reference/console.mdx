@@ -10,8 +10,8 @@ checkpoint graph, and a table of every project for whoever holds the admin
 password.
 
 The console is a static site. It is built from the `console/` directory in the
-server repository and served out of `public/` by the same Express process that
-answers the API, so there is no second server, no second port, and no cross
+server repository, and the same Express process that answers the API serves the
+build where it lands, so there is no second server, no second port, and no cross
 origin anywhere.
 
 <Info>
@@ -23,12 +23,12 @@ origin anywhere.
 
 ## Building it
 
-`public/` is generated and is not in version control. After cloning the server,
+The build is generated and is not in version control. After cloning the server,
 or after any change under `console/`:
 
 ```bash
 npm install
-npm run build   # builds console/ and installs it into public/
+npm run build   # builds the console into console/out
 npm start
 ```
 
